@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/carbonable-labs/indexer/internal/dispatcher"
+	"github.com/carbonable-labs/indexer/internal/indexer"
 	"github.com/carbonable-labs/indexer/internal/starknet"
 	"github.com/carbonable-labs/indexer/internal/storage"
 	"github.com/carbonable-labs/indexer/internal/synchronizer"
@@ -34,16 +36,26 @@ const welcomeMessage = "Sheshat ... Indexing"
 // replayed from database to get faster indexing
 
 func main() {
+	log.SetLevel(log.DebugLevel)
 	fmt.Println(welcomeMessage)
 
-	errCh := make(chan error)
+	syncErrCh := make(chan error)
+	indexerErrCh := make(chan error)
 	ctx := context.Background()
 
 	client := starknet.NewSepoliaFeederGatewayClient()
 	storage := storage.NewPebbleStorage()
+	bus := dispatcher.NewInMemoryBus()
 
-	go synchronizer.Run(ctx, client, storage, errCh)
+	go synchronizer.Run(ctx, client, storage, syncErrCh)
+	go indexer.Run(ctx, client, storage, bus, indexerErrCh)
 
-	err := <-errCh
-	log.Error("error while syncing network", "error", err)
+	for {
+		select {
+		case syncErr := <-syncErrCh:
+			log.Error("error while syncing network", "error", syncErr)
+		case indexerErr := <-indexerErrCh:
+			log.Error("error while indexing network", "error", indexerErr)
+		}
+	}
 }
